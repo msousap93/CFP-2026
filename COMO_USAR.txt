@@ -1,0 +1,20 @@
+Academia PF — Como usar
+=======================
+
+1. Coloque seus PDFs nas pastas dentro de "materias/"
+   Exemplo:
+     materias/
+       Inquerito Policial/
+         Capitulo_1.pdf
+         Capitulo_2.pdf
+       Inteligencia Policial/
+         Modulo_1.pdf
+
+2. Execute o processador:
+   python processar_pdfs.py            → processa PDFs novos
+   python processar_pdfs.py --watch    → monitora automaticamente
+   python processar_pdfs.py --forcar   → reprocessa tudo
+
+3. Abra plataforma.html no navegador.
+
+A plataforma atualiza automaticamente ao recarregar a página.

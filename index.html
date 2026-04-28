@@ -286,6 +286,7 @@
     <div class="topbar-title" id="topbar-titulo">// DASHBOARD OPERACIONAL</div>
     <div class="status-chip"><div class="pulse"></div><span id="status-txt">CARREGANDO...</span></div>
     <div class="topbar-date" id="data-hoje"></div>
+    <button class="btn-mode" onclick="toggleShortcuts()" title="Ver atalhos de teclado">⌨️</button>
     <button class="btn-mode" id="btn-modo" onclick="toggleModo()" title="Alternar modo claro/escuro">☀️</button>
     <button class="btn-primary" onclick="navegarPara('pdfs')">+ ENVIAR PDF</button>
   </div>
@@ -390,6 +391,20 @@ async function carregarDados() {
   // 3. Garante que os objetos internos existam para evitar crash
   if (!ESTADO.materias) ESTADO.materias = {};
   if (!ESTADO.favoritas) ESTADO.favoritas = [];
+  if (!ESTADO.historicoQuestoes) ESTADO.historicoQuestoes = {};
+
+  let respCount = 0;
+  for (const mat of Object.values(DB.materias)) {
+    for (const q of (mat.questoes||[])) {
+       const hist = ESTADO.historicoQuestoes[q.id];
+       if (hist && hist.length > 0) {
+         const ult = hist[hist.length-1];
+         q.respondida = true; q.acertou = ult.acertou; q.selecionada = ult.resposta;
+         respCount++;
+       }
+    }
+  }
+  DB.questoes_respondidas = respCount;
 
   // 4. Sincroniza as matérias do banco com o estado local
   for (const nome of Object.keys(DB.materias)) {
@@ -402,7 +417,7 @@ async function carregarDados() {
   renderizarTudo();
 }
 function criarEstadoPadrao() {
-  return { materias: {}, horasTotal: 0, semanaInicio: new Date().toISOString(), questoesResolvidas: 0, questoesAcertadas: 0, favoritas: [] };
+  return { materias: {}, horasTotal: 0, semanaInicio: new Date().toISOString(), questoesResolvidas: 0, questoesAcertadas: 0, favoritas: [], historicoQuestoes: {} };
 }
 
 function salvarEstado() { localStorage.setItem('academiaEstado', JSON.stringify(ESTADO)); }
@@ -429,12 +444,18 @@ function navegarPara(secao) {
   document.getElementById('topbar-titulo').textContent = titulos[secao] || '// ' + secao.toUpperCase();
   secaoAtual = secao;
 
-  // Show keyboard shortcuts hint for questoes/simulados
+  // Esconde os atalhos automaticamente ao trocar de aba
   const hint = document.getElementById('shortcuts-hint');
-  if (hint) hint.classList.toggle('ativo', ['questoes', 'simulados'].includes(secao));
+  if (hint) hint.classList.remove('ativo');
 
   const fn = { dashboard: renderDashboard, resumos: renderResumos, flashcards: renderFlashcards, questoes: renderQuestoes, simulados: renderSimulados, erradas: renderErradas, notas: renderNotas, plano: renderPlano, desempenho: renderDesempenho, cronograma: renderCronograma, pdfs: renderPDFs, revisao: renderRevisao };
   if (fn[secao]) fn[secao]();
+}
+
+// Função do novo botão de atalhos
+function toggleShortcuts() {
+  const hint = document.getElementById('shortcuts-hint');
+  if (hint) hint.classList.toggle('ativo');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -442,7 +463,10 @@ function navegarPara(secao) {
 // ═══════════════════════════════════════════════════════════════
 function renderizarTudo() {
   document.getElementById('badge-flash').textContent = DB.total_flashcards;
-  document.getElementById('badge-questoes').textContent = DB.total_questoes;
+  const qRestantes = Math.max(0, DB.total_questoes - (DB.questoes_respondidas || 0));
+  const bQuestoes = document.getElementById('badge-questoes');
+  bQuestoes.textContent = qRestantes;
+  bQuestoes.style.display = qRestantes > 0 ? '' : 'none';
   document.getElementById('status-txt').textContent = DB.total_flashcards > 0 ? 'CURSO ATIVO' : 'AGUARDANDO PDFs';
 
   const hoje = new Date();
@@ -669,6 +693,7 @@ function buildFilterBar() {
       <option value="erradas" ${qFiltroStatus==='erradas'?'selected':''}>Erradas</option>
     </select>
     <div class="filter-count">${qListaFiltrada.length} questão(ões)</div>
+    <button class="btn-primary" style="background:var(--surface2);color:var(--text-bright);border:1px solid var(--border);padding:6px 12px;font-size:13px;margin-left:10px" onclick="refazerFiltradas()">↻ REFAZER FILTRADAS</button>
   </div>`;
 }
 
@@ -686,19 +711,26 @@ function renderQuestaoAtual() {
 
   const altsHTML = Object.entries(q.alternativas||{}).map(([letra, texto]) => {
     let cls = '';
-    if (q.respondida) { if (letra===q.gabarito) cls='correta'; else if (letra===qSelecionada) cls='errada'; }
+    if (q.respondida) { if (letra===q.gabarito) cls='correta'; else if (letra===q.selecionada) cls='errada'; }
     else if (letra===qSelecionada) cls='selecionada';
-    
-    // CORREÇÃO: Variável limpa para o clique
-    const acaoClick = q.respondida ? '' : `selecionarQAlt('${letra}')`;
-    
-    return `<div class="alternativa ${cls}" id="qalt-${letra}" onclick="${acaoClick}">
+    return `<div class="alternativa ${cls}" id="qalt-${letra}" onclick="${q.respondida?'':`selecionarQAlt('${letra}')`}">
       <div class="alt-letra">${letra}</div><div class="alt-texto">${texto}</div>
     </div>`;
   }).join('');
 
+  // Lógica do Histórico visual
+  let histHTML = '';
+  if (q.respondida && ESTADO.historicoQuestoes[q.id]) {
+      const tentativas = ESTADO.historicoQuestoes[q.id];
+      histHTML = `<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(0,212,255,0.2);font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--text-dim)">
+        <div style="margin-bottom:6px;color:var(--accent)">// HISTÓRICO DE TENTATIVAS</div>
+        ${tentativas.map((t, i) => `<div>${i+1}ª TENTATIVA: ${new Date(t.data).toLocaleString('pt-BR')} — MARCOU '${t.resposta}' (${t.acertou?'✓ ACERTOU':'✗ ERROU'})</div>`).join('')}
+        <button class="btn-primary" style="margin-top:12px;background:var(--surface2);color:var(--text-bright);border:1px solid var(--border);padding:6px 14px;font-size:14px" onclick="refazerQuestao('${q.id}')">↻ REFAZER QUESTÃO</button>
+      </div>`;
+  }
+
   const explicacaoHTML = q.respondida
-    ? `<div class="explicacao visivel"><span style="color:var(--accent);font-family:'Rajdhani',sans-serif;font-size:22px;letter-spacing:1px">GABARITO: ${q.gabarito}</span><br><br>${q.explicacao||''}</div>`
+    ? `<div class="explicacao visivel"><span style="color:var(--accent);font-family:'Rajdhani',sans-serif;font-size:22px;letter-spacing:1px">GABARITO: ${q.gabarito}</span><br><br>${q.explicacao||''}${histHTML}</div>`
     : `<div class="explicacao" id="q-explicacao"><span style="color:var(--accent);font-family:'Rajdhani',sans-serif;font-size:22px;letter-spacing:1px">GABARITO: ${q.gabarito}</span><br><br>${q.explicacao||''}</div>`;
 
   const statusBadge = q.respondida
@@ -726,6 +758,44 @@ function renderQuestaoAtual() {
     </div>`;
 }
 
+function refazerQuestao(id) {
+  const q = qListaFiltrada[qAtual];
+  q.respondida = false; q.selecionada = null; qSelecionada = null;
+  for (const mat of Object.values(DB.materias)) {
+    const questao = mat.questoes?.find(qq => qq.id === id);
+    if (questao) { questao.respondida = false; questao.selecionada = null; }
+  }
+  renderQuestaoAtual();
+}
+
+function refazerQuestao(id) {
+  const q = qListaFiltrada[qAtual];
+  q.respondida = false; q.selecionada = null; qSelecionada = null;
+  for (const mat of Object.values(DB.materias)) {
+    const questao = mat.questoes?.find(qq => qq.id === id);
+    if (questao) { questao.respondida = false; questao.selecionada = null; }
+  }
+  renderQuestaoAtual();
+}
+
+function refazerFiltradas() {
+  if (!qListaFiltrada.length) return;
+  if (!confirm(`Deseja realmente refazer estas ${qListaFiltrada.length} questões? O histórico de tentativas será mantido.`)) return;
+
+  // Percorre todas as questões do filtro atual e reseta o status visual
+  qListaFiltrada.forEach(q => {
+    q.respondida = false; q.selecionada = null;
+    for (const mat of Object.values(DB.materias)) {
+      const questao = mat.questoes?.find(qq => qq.id === q.id);
+      if (questao) { questao.respondida = false; questao.selecionada = null; }
+    }
+  });
+  
+  qSelecionada = null;
+  qAtual = 0; // Volta para a primeira questão da lista
+  renderQuestaoAtual();
+}
+
 function selecionarQAlt(letra) {
   qSelecionada = letra;
   document.querySelectorAll('#questoes-content .alternativa').forEach(a => a.classList.remove('selecionada'));
@@ -736,16 +806,24 @@ function confirmarQAtual() {
   if (!qSelecionada) { alert('Selecione uma alternativa!'); return; }
   const q = qListaFiltrada[qAtual];
   const acertou = qSelecionada === q.gabarito;
+
+  // 1. Salva no histórico com data e hora
+  if (!ESTADO.historicoQuestoes[q.id]) ESTADO.historicoQuestoes[q.id] = [];
+  ESTADO.historicoQuestoes[q.id].push({ data: new Date().toISOString(), resposta: qSelecionada, acertou: acertou });
+
+  // 2. Atualiza o banco atual
   for (const mat of Object.values(DB.materias)) {
     const questao = mat.questoes?.find(qq => qq.id === q.id);
-    if (questao) { questao.respondida = true; questao.acertou = acertou; }
+    if (questao) { questao.respondida = true; questao.acertou = acertou; questao.selecionada = qSelecionada; }
   }
   const ql = qLista.find(qq => qq.id === q.id);
-  if (ql) { ql.respondida = true; ql.acertou = acertou; }
-  qListaFiltrada[qAtual].respondida = true; qListaFiltrada[qAtual].acertou = acertou;
-  ESTADO.questoesResolvidas = (ESTADO.questoesResolvidas||0)+1;
-  if (acertou) ESTADO.questoesAcertadas = (ESTADO.questoesAcertadas||0)+1;
+  if (ql) { ql.respondida = true; ql.acertou = acertou; ql.selecionada = qSelecionada; }
+  q.respondida = true; q.acertou = acertou; q.selecionada = qSelecionada;
+
+  // 3. Salva e atualiza o visual e os contadores
+  DB.questoes_respondidas = Object.keys(ESTADO.historicoQuestoes).length;
   salvarEstado();
+  renderizarTudo();
   renderQuestaoAtual();
 }
 
@@ -769,18 +847,15 @@ function renderSimulados() {
   const materias = Object.entries(DB.materias).filter(([,m]) => (m.questoes?.length||0) > 0);
   if (!materias.length) { semDados('simulados-content'); return; }
 
-  const altsHTML = Object.entries(q.alternativas||{}).map(([letra, texto]) => {
-    let cls = '';
-    if (respondida) { if (letra===q.gabarito) cls='correta'; else if (letra===resp.selecionada) cls='errada'; }
-    else if (letra===simSelecionada) cls='selecionada';
-    
-    // CORREÇÃO: Variável limpa para o clique
-    const acaoClick = respondida ? '' : `selecionarSimAlt('${letra}')`;
-    
-    return `<div class="alternativa ${cls}" id="simalt-${letra}" onclick="${acaoClick}">
-      <div class="alt-letra">${letra}</div><div class="alt-texto">${texto}</div>
-    </div>`;
-  }).join('');
+  const rows = materias.map(([nome, mat], idx) => `
+    <div class="sim-config-row">
+      <div style="flex:1">
+        <div style="font-size:20px;color:var(--text-bright);font-weight:500">${nome}</div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:13px;color:var(--text-dim)">${mat.questoes?.length||0} questão(ões) disponível(is)</div>
+      </div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--text-dim);margin-right:6px">QTDE:</div>
+      <input class="nota-input" type="number" min="0" max="${mat.questoes?.length||0}" value="0" id="simcnt-${idx}" oninput="atualizarTotalSim()" style="width:80px">
+    </div>`).join('');
 
   document.getElementById('simulados-content').innerHTML = `
     <div class="panel">
@@ -1098,7 +1173,7 @@ function handleQuestoesKey(e) {
     case 'ArrowRight': e.preventDefault(); qProximo(); break;
     case 'm': case 'M': if (q) { e.preventDefault(); toggleFavorita(q.id); } break;
     case 'Enter': e.preventDefault(); if (q && !q.respondida) confirmarQAtual(); break;
-    default: { const l = e.key.toLowerCase(); if (letras.includes(l) && q && !q.respondida) { e.preventDefault(); selecionarQAlt(l); } }
+    default: { const l = e.key.toLowerCase(); if (letras.includes(l) && q && !q.respondida) { e.preventDefault(); selecionarQAlt(l.toUpperCase()); } }
   }
 }
 
@@ -1111,7 +1186,7 @@ function handleSimuladoKey(e) {
     case 'ArrowLeft': e.preventDefault(); simAnterior(); break;
     case 'ArrowRight': e.preventDefault(); simProxima(); break;
     case 'Enter': e.preventDefault(); if (!respondida) confirmarSimQuestao(); break;
-    default: { const l = e.key.toLowerCase(); if (letras.includes(l) && !respondida) { e.preventDefault(); selecionarSimAlt(l); } }
+    default: { const l = e.key.toLowerCase(); if (letras.includes(l) && !respondida) { e.preventDefault(); selecionarSimAlt(l.toUpperCase()); } }
   }
 }
 
